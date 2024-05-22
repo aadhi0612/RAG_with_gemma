@@ -1,0 +1,97 @@
+pymupdf 
+pytesseract 
+pillow
+transformers 
+accelerate==0.22.0 
+xformers==0.0.21 
+bitsandbytes 
+sentence_transformers==2.2.2 
+langchain_community
+datasets
+llama-index-embeddings-huggingface
+llama-index==0.10.18
+langchain==0.1.11
+faiss-gpu
+sentence-transformers
+torch==2.2.1
+pypdf
+llama-index-vector-stores-faiss
+llama-index-embeddings-langchain
+llama-index-llms-huggingface
+
+
+curl -X POST "http://172.31.11.168:8000/api/query" -H "Content-Type: application/json" -d '{"prompt": "what is amines", "subject": "Chemistry"}'
+
+
+def elaborate(llm, context: str, prompt: str) -> str:
+    elaborate_prompt = f"Please provide a detailed explanation on the following topic: {prompt}. Here is the context: {context}"
+    # input_ids = tokenizer.encode(prompt, return_tensors="pt").to(model.device)
+    coded_response = llm.generate_text(elaborate_prompt)
+    decoded_text = tokenizer.decode(coded_response, skip_special_tokens=True)
+    # print(decoded_text)
+    return decoded_text
+
+
+    Settings.llm = HuggingFaceLLM(
+    context_window=2048,
+    max_new_tokens=512,
+    generate_kwargs={"temperature": 0.1, "do_sample": True},
+    tokenizer_name=CACHE_DIR,
+    model_name=CACHE_DIR,
+    tokenizer_kwargs={"max_length": 10000},
+    model_kwargs={"torch_dtype": torch.float16}
+    )
+
+
+
+
+#########
+
+
+dataset_path = "/home/ubuntu/RAG/datasets/chemistry/*.pdf"
+input_files = glob.glob(dataset_path)
+reader = SimpleDirectoryReader(input_files=input_files)
+documents = reader.load_data()
+
+print('Number of pages:', len(documents))
+print(documents)
+
+parser = SentenceSplitter.from_defaults(chunk_size=1024, chunk_overlap=30) # starting to increase chunk_overlap from 20 to 30% to see if it helps with the issue
+nodes = parser.get_nodes_from_documents(documents)
+print(f"Number of nodes created: {len(nodes)}")
+
+pprint.pprint([nodes[i] for i in range(3)])
+output_file = "output.txt"
+file_path = os.path.join(cache_dir, output_file)
+
+formatted_output = pprint.pformat([nodes[i] for i in range(3)])
+with open(file_path, "w", encoding="utf-8") as file:
+    file.write(formatted_output)
+print(f"Output saved successfully to: {file_path}")
+faiss_index = faiss.IndexFlatL2(768)
+Settings.embed_model = LangchainEmbedding( HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2"))
+subject_dir = "/home/ubuntu/RAG/storage/chemistry"
+vector_store = FaissVectorStore(faiss_index=faiss_index)
+storage_dir = os.getenv("STORAGE_DIR", "./storage/chemistry")
+storage = StorageContext.from_defaults(vector_store=vector_store)
+index = VectorStoreIndex(nodes, storage_context=storage)
+
+index.storage_context.persist(persist_dir=subject_dir)
+Settings.llm = HuggingFaceLLM(
+    context_window=2048,
+    max_new_tokens=512,
+    generate_kwargs={"temperature": 0.1, "do_sample": True},
+    tokenizer_name="/home/ubuntu/RAG/models",
+    model_name="/home/ubuntu/RAG/models",
+    tokenizer_kwargs={"max_length": 10000},
+    model_kwargs={"torch_dtype": torch.float16})
+
+storage_context = StorageContext.from_defaults(persist_dir=subject_dir, vector_store=vector_store)
+stored_index = load_index_from_storage(storage_context)
+query_engine = stored_index.as_query_engine()
+prompt="what is amines"
+
+t0=time.time()
+response = query_engine.query(prompt)
+print(f"Time: {time.time()-t0}")
+print(response)
